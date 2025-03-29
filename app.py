@@ -50,6 +50,15 @@ def generate_time_slots(start_time, end_time, break_start=None, break_end=None, 
     
     return slots
 
+def get_db_path():
+    # Render provides a persistent volume at /var/lib/sqlite
+    if 'RENDER' in os.environ:
+        return '/var/lib/sqlite/hospital.db'
+    else:
+        # Local development path
+        os.makedirs('instance', exist_ok=True)
+        return os.path.join('instance', 'hospital.db')
+
 # Authentication routes
 @app.route('/')
 def home():
