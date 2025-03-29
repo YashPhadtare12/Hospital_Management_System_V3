@@ -1065,6 +1065,7 @@ def patient_history(patient_id):
         conn.close()
 
 
-# Add this at the top (below imports)
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)  # Render uses port 10000
+    from database import init_db
+    init_db()  # Initialize tables
+    app.run(host='0.0.0.0', port=10000)
