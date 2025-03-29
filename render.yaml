@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: hospital-management
+    runtime: python
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn app:app"
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////var/lib/sqlite/hospital.db
+      - key: SECRET_KEY
+        generateValue: true
+    disk:
+      name: hospital-data
+      mountPath: /var/lib/sqlite
+      sizeGB: 1
