@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
+# exit on error
 set -o errexit
 
-# Create database directory if it doesn't exist
-mkdir -p /var/lib/sqlite
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Initialize database
-python -c "from database import init_db; init_db()"
+# Only initialize database if it's a fresh deployment
+if [ "$RENDER" ]; then
+  python database.py
+fi
