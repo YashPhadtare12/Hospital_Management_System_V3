@@ -1,24 +1,46 @@
+import os
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-import sqlite3
 from datetime import datetime, timedelta
-import os
 import pandas as pd
 from io import BytesIO
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key_here'
+app.secret_key = os.getenv('SECRET_KEY', 'fallback_secret_key_for_development')
+
+# Configuration
 app.config['UPLOAD_FOLDER'] = 'static/images/doctors'
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg'}
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
 
 # Helper functions
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def get_db_connection():
-    conn = sqlite3.connect('hospital.db')
-    conn.row_factory = sqlite3.Row
+    """Create and return a database connection."""
+    if 'RENDER' in os.environ:
+        # Production - Render PostgreSQL
+        import psycopg2
+        from psycopg2.extras import DictCursor
+        conn = psycopg2.connect(
+            dbname=os.getenv('PGDATABASE'),
+            user=os.getenv('PGUSER'),
+            password=os.getenv('PGPASSWORD'),
+            host=os.getenv('PGHOST'),
+            port=os.getenv('PGPORT'),
+            cursor_factory=DictCursor
+        )
+    else:
+        # Development - SQLite
+        import sqlite3
+        os.makedirs('instance', exist_ok=True)
+        conn = sqlite3.connect('instance/hospital.db')
+        conn.row_factory = sqlite3.Row
     return conn
 
 def generate_time_slots(start_time, end_time, break_start=None, break_end=None, interval=15):
@@ -37,11 +59,10 @@ def generate_time_slots(start_time, end_time, break_start=None, break_end=None, 
                 continue
         
         if slot_end <= end_time:
-            # Format time in hh:mm am/pm format
             start_str = current_time.strftime('%I:%M %p').lower()
             end_str = slot_end.strftime('%I:%M %p').lower()
             slots.append({
-                'start': current_time.strftime('%H:%M'),  # Keep 24h format for storage
+                'start': current_time.strftime('%H:%M'),
                 'end': slot_end.strftime('%H:%M'),
                 'display_start': start_str,
                 'display_end': end_str
@@ -49,15 +70,6 @@ def generate_time_slots(start_time, end_time, break_start=None, break_end=None, 
         current_time = slot_end
     
     return slots
-
-def get_db_path():
-    # Render provides a persistent volume at /var/lib/sqlite
-    if 'RENDER' in os.environ:
-        return '/var/lib/sqlite/hospital.db'
-    else:
-        # Local development path
-        os.makedirs('instance', exist_ok=True)
-        return os.path.join('instance', 'hospital.db')
 
 # Authentication routes
 @app.route('/')
@@ -95,7 +107,6 @@ def login():
                     session['hospital_name'] = user['hospital_name']
                     return redirect(url_for('admin_dashboard'))
             else:
-                # For doctor login, get hospital info
                 user = conn.execute('''
                     SELECT d.*, s.hospital_name 
                     FROM doctors d
@@ -132,7 +143,6 @@ def doctor_login():
         
         conn = get_db_connection()
         try:
-            # Get doctor with hospital information
             doctor = conn.execute('''
                 SELECT d.*, s.hospital_name 
                 FROM doctors d
@@ -157,7 +167,6 @@ def doctor_login():
             conn.close()
     
     return render_template('doctor/login.html')
-
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -415,7 +424,6 @@ def set_doctor_slots(doctor_id):
     
     conn = get_db_connection()
     
-    # Verify doctor belongs to this hospital
     doctor = conn.execute('SELECT * FROM doctors WHERE id = ? AND hospital_id = ?', 
                          (doctor_id, session['hospital_id'])).fetchone()
     if not doctor:
@@ -909,21 +917,6 @@ def print_prescription(appointment_id):
             flash('Prescription not found!', 'danger')
             return redirect(url_for('doctor_appointments'))
         
-        # Get next appointment if exists
-        next_appointment = conn.execute('''
-            SELECT date, time_slot FROM appointments
-            WHERE patient_id = (
-                SELECT patient_id FROM appointments WHERE id = ?
-            )
-            AND date > (
-                SELECT date FROM appointments WHERE id = ?
-            )
-            AND status = 'Scheduled'
-            AND hospital_id = ?
-            ORDER BY date ASC
-            LIMIT 1
-        ''', (appointment_id, appointment_id, session['hospital_id'])).fetchone()
-        
         # Process medicines for display
         medicines_parsed = []
         if prescription_data['medicines']:
@@ -946,8 +939,7 @@ def print_prescription(appointment_id):
         prescription['medicines_parsed'] = medicines_parsed
         
         return render_template('doctor/print_prescription.html',
-                            prescription=prescription,
-                            next_appointment=next_appointment)
+                            prescription=prescription)
     except Exception as e:
         flash('Error loading prescription', 'danger')
         app.logger.error(f"Print prescription error: {str(e)}")
@@ -993,7 +985,6 @@ def all_patients_history():
     return render_template('doctor/all_patients_history.html',
                          patients=patients,
                          search_query=search_query)
-
 
 @app.route('/doctor/patient_history/<int:patient_id>')
 def patient_history(patient_id):
@@ -1064,8 +1055,5 @@ def patient_history(patient_id):
     finally:
         conn.close()
 
-
 if __name__ == '__main__':
-    from database import init_db
-    init_db()  # Initialize tables
     app.run(host='0.0.0.0', port=10000)
